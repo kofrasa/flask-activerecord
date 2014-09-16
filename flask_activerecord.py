@@ -1,9 +1,9 @@
-#!/usr/bin/env python
-
+# -*- coding: utf-8 -*-
 
 import datetime as dt
 from sqlalchemy.orm import ColumnProperty, RelationshipProperty, object_mapper, class_mapper, defer, lazyload
-from sqlalchemy import Column, BigInteger
+from sqlalchemy import Column, Integer, and_, or_
+import flask_sqlalchemy
 
 
 def _get_mapper(obj):
@@ -34,26 +34,26 @@ def _get_columns(model):
 
 
 def _get_relations(model):
+    """Get relationship names and properties from model
+    """
     return {c.key: c for c in _get_mapper(model).iterate_properties
             if isinstance(c, RelationshipProperty)}
 
 
 def _model_to_dict(models, *fields, **props):
-    """Converts an SQLAlchemy model object to JSON dict
+    """Serialize an ActiveRecord object to a JSON dict
     """
     result = []
     fields = list(fields)
 
-    is_many = isinstance(models, list)
+    has_many = isinstance(models, list)
 
     # terminate early if there is nothing to work on
     if not models:
-        return [] if is_many else {}
+        return [] if has_many else {}
 
-    if not is_many:
+    if not has_many:
         models = [models]
-
-    assert isinstance(models[0], ActiveRecord), "Invalid ActiveRecord object"
 
     if fields and len(fields) == 1:
         fields = [s.strip() for s in fields[0].split(',')]
@@ -61,7 +61,7 @@ def _model_to_dict(models, *fields, **props):
     # pop of meta information
     # _overwrite = props.pop('_overwrite', None)
     _exclude = props.pop('_exclude', [])
-    if isinstance(_exclude, basestring):
+    if isinstance(_exclude, str):
         _exclude = [e.strip() for e in _exclude.split(',')]
 
     # select columns given or all if non was specified
@@ -79,7 +79,7 @@ def _model_to_dict(models, *fields, **props):
     # check if remaining fields are valid related attributes
     for k in related_attr:
         if '.' in k:
-            index = k.index(".")
+            index = k.index('.')
             model, attr = k[:index], k[index + 1:]
             if model in related_fields:
                 related_map[model] = related_map.get(model, [])
@@ -110,17 +110,16 @@ def _model_to_dict(models, *fields, **props):
             fields = related_map[k]
             data[k] = _model_to_dict(val, *fields)
 
-        # add extra properties
+        # handle extra properties
         for k in props:
             data[k] = props[k]
             if callable(data[k]):
                 data[k] = data[k](model)
-
         # add to results
         result.append(data)
 
     # get correct response
-    result = result if is_many else result[0]
+    result = result if has_many else result[0]
     return result
 
 
@@ -129,7 +128,7 @@ def json_serialize(value):
 
     :param value:
     """
-    if value is None or isinstance(value, (int, long, float, basestring, bool)):
+    if value is None or isinstance(value, (int, float, str, bool)):
         return value
     elif isinstance(value, (list, tuple, set)):
         return [json_serialize(v) for v in value]
@@ -140,10 +139,10 @@ def json_serialize(value):
     # return date/time in isoformat
     elif isinstance(value, (dt.datetime, dt.date, dt.time)):
         return value.isoformat()
-    elif isinstance(value, ActiveRecord):
-        return _model_to_dict(value)
+    elif hasattr(value, 'to_dict') and callable(getattr(value, 'to_dict')):
+        return value.to_dict()
     else:
-        return unicode(value)
+        return str(value)
 
 
 def _select(model, *fields):
@@ -250,134 +249,7 @@ def _where(model, *criteria, **filters):
     return conditions
 
 
-class ActiveRecord(object):
-    """Implements a simple ActiveRecord pattern for Flask-SQLAlchemy adding Rails-style sweetness
-
-    Example:
-
-    class User(db.Model, ActiveRecord):
-        username = db.Column(db.String(80), unique=True)
-        email = db.Column(db.String(120), unique=True)
-        addresses = db.relationship('Address', backref='user', lazy='joined')
-
-    class Address(db.Model, ActiveRecord):
-        city = db.Column(db.String(50))
-        state = db.Column(db.String(50))
-        street = db.Column(db.String(50))
-        user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-
-    """
-    __abstract__ = True
-
-    query_class = None
-
-    # default primary key of ActiveRecord class
-    id = Column(BigInteger, primary_key=True)
-
-    # attributes protected from mass assignment
-    _attr_protected = tuple()
-
-    # attributes accessible through mass assignments and also returned by to_json
-    _attr_accessible = tuple()
-
-    # attributes hidden from JSON serialization
-    _attr_hidden = tuple()
-
-    def __repr__(self):
-        return "%s(\n%s\n)" % (
-            self.__class__.__name__,
-            ', \n'.join(["%s=%r" % (c, getattr(self, c)) for c in self.__class__.get_columns()])
-        )
-
-    def assign_attributes(self, *args, **params):
-        sanitize = True
-        if args and isinstance(args[0], dict):
-            sanitize = args[0].get('sanitize', sanitize)
-            params = params or args[0]
-        del params['sanitize']
-
-        for attr in self.get_columns():
-            if attr not in params:
-                continue
-            if sanitize and attr in self._attr_protected:
-                continue
-            if hasattr(self, attr) and (not sanitize or not self._attr_accessible or attr in self._attr_accessible):
-                setattr(self, attr, params[attr])
-
-        return self
-
-    def update_attributes(self, *args, **params):
-        self.assign_attributes(*args, **params)
-        return self.save()
-
-    def save(self):
-        self.query.session.add(self)
-        self.query.session.commit()
-        return self
-
-    def delete(self):
-        self.query.session.delete(self)
-        self.query.session.commit()
-        return self
-
-    def to_dict(self, *fields, **props):
-        return _model_to_dict(self, *fields, **props)
-
-    @classmethod
-    def get_columns(cls):
-        return _get_columns(cls).keys()
-
-    @classmethod
-    def create(cls, **kw):
-        return cls(**kw).save()
-
-    @classmethod
-    def destroy(cls, *idents):
-        return cls.where(id=list(idents)).delete()
-
-    @classmethod
-    def find(cls, ident):
-        return cls.query.get(ident)
-
-    @classmethod
-    def all(cls):
-        return cls.query.all()
-
-    @classmethod
-    def first(cls):
-        return cls.query.first()
-
-    @classmethod
-    def exists(cls, *criteria, **filters):
-        return cls.find_by(*criteria, **filters) is not None
-
-    @classmethod
-    def find_by(cls, *criteria, **filters):
-        return cls.where(*criteria, **filters).first()
-
-    @classmethod
-    def find_each(cls, batch_size=1000):
-        return cls.select().find_each(batch_size=batch_size)
-
-    @classmethod
-    def find_in_batches(cls, batch_size=1000):
-        return cls.select().find_in_batches(batch_size=batch_size)
-
-    @classmethod
-    def select(cls, *fields):
-        q = _QueryHelper(cls)
-        q.select(*fields)
-        return q
-
-    @classmethod
-    def where(cls, *criteria, **filters):
-        q = _QueryHelper(cls)
-        q.where(*criteria, **filters)
-        return q
-
-
 class _QueryHelper(object):
-
     def __init__(self, model):
         self._model_cls = model
         self._options = []
@@ -481,3 +353,203 @@ class _QueryHelper(object):
                 raise StopIteration()
             else:
                 offset += batch_size
+
+
+class ActiveRecord(object):
+    """Implements a simple ActiveRecord pattern for Flask-SQLAlchemy adding Rails-style sweetness
+
+    Example:
+
+    class User(db.ActiveRecord):
+        _attr_protected = ('id', 'email', 'username', 'password')
+        _attr_accessible = tuple()
+        _attr_hidden = ('password',)
+
+        username = db.Column(db.String(80), unique=True)
+        password = db.Column(db.String(80), unique=True)
+        email = db.Column(db.String(120), unique=True)
+        addresses = db.relationship('Address', backref='user', lazy='joined')
+
+    class Address(db.ActiveRecord):
+        city = db.Column(db.String(50))
+        state = db.Column(db.String(50))
+        street = db.Column(db.String(50))
+        user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    """
+    # __abstract__ = True
+
+    # : the query class used.  The :attr:`query` attribute is an instance
+    #: of this class.  By default a :class:`BaseQuery` is used.
+    query_class = flask_sqlalchemy.BaseQuery
+
+    #: an instance of :attr:`query_class`.  Can be used to query the
+    #: database for instances of this model.
+    query = None
+
+    # default primary key of ActiveRecord class
+    id = Column(Integer, primary_key=True)
+
+    # attributes protected from mass assignment
+    _attr_protected = tuple()
+
+    # attributes accessible through mass assignments and also returned by to_json
+    _attr_accessible = tuple()
+
+    # attributes hidden from JSON serialization
+    _attr_hidden = tuple()
+
+    def __repr__(self):
+        return "%s(\n%s\n)" % (
+            self.__class__.__name__,
+            ', \n'.join(["  %s=%r" % (c, getattr(self, c)) for c in self.__class__.get_columns()])
+        )
+
+    def __getattr__(self, name):
+        conj = []
+        prop = 'find_by_'
+
+        if name.startswith(prop):
+            qs = name[len(prop):]
+            # group AND clauses and then OR clauses
+            # make OR clauses map keys and AND clauses map values
+            conj = [field for field in qs.split('_or_')]
+            if conj:
+                for field in conj[:]:
+                    if '_and_' in field:
+                        conj.append('__or__')
+                        conj.extend(field.split('_and_'))
+            else:
+                conj = qs.split('_and_')
+        else:
+            return getattr(super(ActiveRecord, self), name)
+
+        if not conj:
+            raise AttributeError(name)
+        dynamic_query = {
+            "find_by_": lambda *args: self._find_dynamic(args, conj)
+        }[prop]
+
+        return dynamic_query
+
+    def _find_dynamic(self, args, stack):
+        field_count = len(stack) - stack.count('__or__')
+        if len(args) != field_count:
+            raise Exception("Invalid number of arguments")
+
+        criteria = []
+        conj = []
+        index = 0
+
+        def _push_and():
+            if len(conj) > 1:
+                criteria.append(and_(*conj))
+            else:
+                criteria.append(conj[0])
+
+        for attr in stack:
+            if attr == '__or__':
+                _push_and()
+                conj = []
+            else:
+                conj.append(getattr(self.__class__, attr) == args[index])
+                index += 1
+        if conj:
+            _push_and()
+
+        # or queries
+        if len(criteria) > 1:
+            criteria = or_(*criteria)
+
+        return self.find_by(*criteria)
+
+    def assign_attributes(self, *args, **params):
+        sanitize = True
+        if args and isinstance(args[0], dict):
+            sanitize = args[0].get('sanitize', sanitize)
+            params = params or args[0]
+        del params['sanitize']
+
+        for attr in self.get_columns():
+            if attr not in params:
+                continue
+            if sanitize and attr in self._attr_protected:
+                continue
+            if hasattr(self, attr) and not sanitize or (not self._attr_accessible or attr in self._attr_accessible):
+                setattr(self, attr, params[attr])
+        return self
+
+    def update_attributes(self, *args, **params):
+        self.assign_attributes(*args, **params)
+        return self.save()
+
+    def save(self, commit=True):
+        self.query.session.add(self)
+        if commit:
+            self.query.session.commit()
+        return self
+
+    def delete(self, commit=True):
+        self.query.session.delete(self)
+        return commit and self.query.session.commit()
+
+    def to_dict(self, *fields, **props):
+        return _model_to_dict(self, *fields, **props)
+
+    @classmethod
+    def get_columns(cls):
+        return _get_columns(cls).keys()
+
+    @classmethod
+    def create(cls, **kw):
+        return cls(**kw).save()
+
+    @classmethod
+    def destroy(cls, *idents):
+        return cls.where(id=list(idents)).delete()
+
+    @classmethod
+    def find(cls, id):
+        return cls.query.get(id)
+
+    @classmethod
+    def all(cls):
+        return cls.query.all()
+
+    @classmethod
+    def first(cls):
+        return cls.query.first()
+
+    @classmethod
+    def exists(cls, *criteria, **filters):
+        return cls.find_by(*criteria, **filters) is not None
+
+    @classmethod
+    def find_by(cls, *criteria, **filters):
+        return cls.where(*criteria, **filters).first()
+
+    @classmethod
+    def find_each(cls, batch_size=1000):
+        return cls.select().find_each(batch_size=batch_size)
+
+    @classmethod
+    def find_in_batches(cls, batch_size=1000):
+        return cls.select().find_in_batches(batch_size=batch_size)
+
+    @classmethod
+    def select(cls, *fields):
+        q = _QueryHelper(cls)
+        q.select(*fields)
+        return q
+
+    @classmethod
+    def where(cls, *criteria, **filters):
+        q = _QueryHelper(cls)
+        q.where(*criteria, **filters)
+        return q
+
+
+def patch_sqlalchemy_model():
+    """Patches the `flask_sqlalchemy.Model` object to support active record flexible style queries
+    """
+    # monkey path the default Model
+    flask_sqlalchemy.Model = ActiveRecord

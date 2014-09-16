@@ -1,4 +1,2 @@
-flask-activerecord
-==================
-
-ActiveRecord mixin for Flask-SQLAlchemy models
+# Flask-ActiveRecord
+ActiveRecord patch for Flask-SQLAlchemy models which provides flexible and dynamic query methods

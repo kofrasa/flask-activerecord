@@ -2,7 +2,7 @@
 Flask-ActiveRecord
 ------------------
 
-ActiveRecord mixin implementation providing Rails-style utilities for Flask-SQLAlchemy models
+ActiveRecord patch for Flask-SQLAlchemy models which provides flexible and dynamic query methods
 """
 
 from setuptools import setup
@@ -15,7 +15,7 @@ setup(
     author='Francis Asante',
     author_email='kofrasa@gmail.com',
     url='http://github.com/kofrasa/flask-activerecord',
-    description='ActiveRecord mixin implementation providing rails-style utilities for Flask-SQLAlchemy models',
+    description='ActiveRecord patch for Flask-SQLAlchemy models which provides flexible and dynamic query methods',
     long_description=__doc__,
     packages=['flask_activerecord'],
     include_package_data=True,
