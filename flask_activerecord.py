@@ -548,7 +548,7 @@ class ActiveRecord(object):
         return q
 
 
-def patch_sqlalchemy_model():
+def patch_model():
     """Patches the `flask_sqlalchemy.Model` object to support active record flexible style queries
     """
     # monkey path the default Model
