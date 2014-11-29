@@ -1,9 +1,25 @@
 # -*- coding: utf-8 -*-
+"""
+    flaskext.activerecord
+    ~~~~~~~~~~~~~~~~~~~~~
+    Path and extend `flask_sqlalchemy.Model` with ActiveRecord support.
+    :copyright: (c) 2014 by Francis Asante
+    :license: BSD, see LICENSE for more details.
+"""
 
 import datetime as dt
-from sqlalchemy.orm import ColumnProperty, RelationshipProperty, object_mapper, class_mapper, defer, lazyload
-from sqlalchemy import Column, Integer, and_, or_
 import flask_sqlalchemy
+from sqlalchemy.orm import ColumnProperty, RelationshipProperty, object_mapper, class_mapper, defer, lazyload
+
+
+__slots__ = ('patch_model', 'json_serialize')
+
+
+def patch_model():
+    """Patches the `flask_sqlalchemy.Model` object to support active record flexible style queries
+    """
+    # monkey path the default Model with ActiveRecord
+    flask_sqlalchemy.Model = ActiveRecord
 
 
 def _get_mapper(obj):
@@ -13,16 +29,16 @@ def _get_mapper(obj):
     return mapper(obj)
 
 
-def _primary_key_names(obj):
+def _get_primary_keys(obj):
     """Returns the name of the primary key of the specified model or instance
     of a model, as a string.
 
-    If `model_or_instance` specifies multiple primary keys and ``'id'`` is one
-    of them, ``'id'`` is returned. If `model_or_instance` specifies multiple
-    primary keys and ``'id'`` is not one of them, only the name of the first
+    If `model_or_instance` specifies multiple primary keys and `'id'` is one
+    of them, `'id'` is returned. If `model_or_instance` specifies multiple
+    primary keys and `'id'` is not one of them, only the name of the first
     one in the list of primary keys is returned.
     """
-    return [key.name for key in _get_mapper(obj).primary_key]
+    return [key for key, val in _get_columns(obj).iteritems() if val.is_primary()]
 
 
 def _get_columns(model):
@@ -91,7 +107,7 @@ def _model_to_dict(models, *fields, **props):
     if not model_attr and not related_map:
         return {}
 
-    for key in _primary_key_names(models[0]):
+    for key in _get_primary_keys(models[0]):
         model_attr.add(key)
 
     for model in models:
@@ -126,7 +142,7 @@ def _model_to_dict(models, *fields, **props):
 def json_serialize(value):
     """Returns a JSON serializable python type of the given value
 
-    :param value:
+    :param value: the object to return as JSON a json value
     """
     if value is None or isinstance(value, (int, float, str, bool)):
         return value
@@ -136,8 +152,9 @@ def json_serialize(value):
         for k, v in value.items():
             value[k] = json_serialize(v)
         return value
-    # return date/time in isoformat
     elif isinstance(value, (dt.datetime, dt.date, dt.time)):
+        if isinstance(value, (dt.datetime, dt.time)):
+            value = value.replace(microsecond=0)
         return value.isoformat()
     elif hasattr(value, 'to_dict') and callable(getattr(value, 'to_dict')):
         return value.to_dict()
@@ -148,7 +165,7 @@ def json_serialize(value):
 def _select(model, *fields):
     """Projects given columns to be included in query output
     """
-    pk_columns = _primary_key_names(model)
+    pk_columns = _get_primary_keys(model)
     all_columns = _get_columns(model).keys()
     relations = _get_relations(model).keys()
 
@@ -165,7 +182,6 @@ def _select(model, *fields):
 
     # ensure PKs are included and defer unrequested attributes (including related)
     # NB: we intentionally allows fields like "related.attribute" to pass through
-
     for attr in (c.key for c in _get_mapper(model).iterate_properties):
         if attr not in fields:
             if attr in pk_columns:
@@ -257,30 +273,32 @@ class _QueryHelper(object):
         self._order_by = []
         self._group_by = []
         self._having = None
-        self._offset = 0
+        self._offset = None
         self._limit = None
-        self._compiled = None
+        self._orm_query = None
 
     @property
     def _query(self):
-        if not self._compiled:
-            query = self._model_cls.query
+        if not self._orm_query:
+            sql = self._model_cls.query
             if not self._options:
                 # force lazy loading of unselected relations
                 self.select()
-            query = query.options(*self._options)
-
+            sql = sql.options(*self._options)
             if self._filters:
-                query = query.filter(*self._filters)
+                sql = sql.filter(*self._filters)
             if self._order_by:
-                query = query.order_by(*self._order_by)
+                sql = sql.order_by(*self._order_by)
             if self._group_by:
-                query = query.group_by(*self._group_by)
+                sql = sql.group_by(*self._group_by)
                 if self._having:
-                    query = query.having(self._having)
-            self._compiled = query
-
-        return self._compiled
+                    sql = sql.having(self._having)
+            if self._offset and self._offset > 0:
+                sql = sql.offset(self._offset)
+                if self._limit and self._limit > 0:
+                    sql = sql.limit(self._limit)
+            self._orm_query = sql
+        return self._orm_query
 
     def all(self):
         return self._query.all()
@@ -322,61 +340,87 @@ class _QueryHelper(object):
         self._having = criterion
         return self
 
-    def find_each(self, batch_size=1000):
+    def offset(self, offset):
+        self._offset = offset
+        return self
+
+    def limit(self, limit):
+        self._limit = limit
+        return self
+
+    def find_each(self, start=None, batch_size=None):
+        for rows in self.find_in_batches(start, batch_size):
+            for obj in rows:
+                yield obj
+
+    def find_in_batches(self, start=None, batch_size=None):
+        """
+        Retrieve records in batches returning a generator for efficient iteration
+        :param start:
+        :param batch_size:
+        :return:
+        """
+        offset = batch_size and start or 0
+        batch_size = batch_size or start or 1000
+
+        if offset < 0:
+            offset = 0
         if batch_size < 1:
             raise Exception("batch_size must be positive")
 
-        offset = 0
-        counter = 0
         while True:
-            self._query.offset(offset).limit(batch_size)
-            for row in self._query:
-                yield row
-                counter += 1
-            if counter < batch_size:
-                raise StopIteration()
-            else:
-                offset += batch_size
-                counter = 0
-
-    def find_in_batches(self, batch_size=1000):
-        if batch_size < 1:
-            raise Exception("batch_size must be positive")
-
-        offset = 0
-        while True:
-            self._query.offset(offset).limit(batch_size)
-            batch = self._query.all()
-            if batch:
-                yield batch
-            if len(batch) < batch_size:
+            rows = self._query.offset(offset).limit(batch_size).all()
+            if rows:
+                yield rows
+            if len(rows) < batch_size:
                 raise StopIteration()
             else:
                 offset += batch_size
 
 
 class ActiveRecord(object):
-    """Implements a simple ActiveRecord pattern for Flask-SQLAlchemy adding Rails-style sweetness
+    """A implementation of the `ActiveRecord` pattern
 
     Example:
 
-    class User(db.ActiveRecord):
+    class User(db.Model):
         _attr_protected = ('id', 'email', 'username', 'password')
-        _attr_accessible = tuple()
+        _attr_accessible = tuple('first_name', 'last_name')
         _attr_hidden = ('password',)
 
         username = db.Column(db.String(80), unique=True)
         password = db.Column(db.String(80), unique=True)
         email = db.Column(db.String(120), unique=True)
-        addresses = db.relationship('Address', backref='user', lazy='joined')
+        first_name = db.Column(db.String(80), unique=True)
+        last_name = db.Column(db.String(80), unique=True)
 
-    class Address(db.ActiveRecord):
-        city = db.Column(db.String(50))
-        state = db.Column(db.String(50))
-        street = db.Column(db.String(50))
-        user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    user = User.create(username='kofrasa', password='kofrasa', email='kofrasa@gmail.com')
+    user_from_db = User.find(user.id)
+    # user == user_from_db
+    user.first_name = 'Francis'
+    user.save() # changes have been reflected to db
+
+    # for batch changes
+    user.last_name = 'Asante'
+    user.password = 'something secret'
+    user.save(False) # add to session but do not flush just yet
+
+    # do some more work and flush with saving some other objects
+    db.session.commit()
+
+    # batch updates
+    # note that password will not be updated. it is included in _attr_protected tuple
+    user.update(first_name='John', last_name='Doe', password='new_password')
+
+    # Queries
+    User.count() # return 1
+    User.all() # return [User<id=1>]
+    User.first() # return the first entry
+    User.find_by(username='kofrasa') # return first entry matching criteria
+    User.where(last_name='Asante').all() # return all entries matching criteria
+
     """
-    # __abstract__ = True
+    __abstract__ = True
 
     # : the query class used.  The :attr:`query` attribute is an instance
     #: of this class.  By default a :class:`BaseQuery` is used.
@@ -385,9 +429,6 @@ class ActiveRecord(object):
     #: an instance of :attr:`query_class`.  Can be used to query the
     #: database for instances of this model.
     query = None
-
-    # default primary key of ActiveRecord class
-    id = Column(Integer, primary_key=True)
 
     # attributes protected from mass assignment
     _attr_protected = tuple()
@@ -404,65 +445,7 @@ class ActiveRecord(object):
             ', \n'.join(["  %s=%r" % (c, getattr(self, c)) for c in self.__class__.get_columns()])
         )
 
-    def __getattr__(self, name):
-        conj = []
-        prop = 'find_by_'
-
-        if name.startswith(prop):
-            qs = name[len(prop):]
-            # group AND clauses and then OR clauses
-            # make OR clauses map keys and AND clauses map values
-            conj = [field for field in qs.split('_or_')]
-            if conj:
-                for field in conj[:]:
-                    if '_and_' in field:
-                        conj.append('__or__')
-                        conj.extend(field.split('_and_'))
-            else:
-                conj = qs.split('_and_')
-        else:
-            return getattr(super(ActiveRecord, self), name)
-
-        if not conj:
-            raise AttributeError(name)
-        dynamic_query = {
-            "find_by_": lambda *args: self._find_dynamic(args, conj)
-        }[prop]
-
-        return dynamic_query
-
-    def _find_dynamic(self, args, stack):
-        field_count = len(stack) - stack.count('__or__')
-        if len(args) != field_count:
-            raise Exception("Invalid number of arguments")
-
-        criteria = []
-        conj = []
-        index = 0
-
-        def _push_and():
-            if len(conj) > 1:
-                criteria.append(and_(*conj))
-            else:
-                criteria.append(conj[0])
-
-        for attr in stack:
-            if attr == '__or__':
-                _push_and()
-                conj = []
-            else:
-                conj.append(getattr(self.__class__, attr) == args[index])
-                index += 1
-        if conj:
-            _push_and()
-
-        # or queries
-        if len(criteria) > 1:
-            criteria = or_(*criteria)
-
-        return self.find_by(*criteria)
-
-    def assign_attributes(self, *args, **params):
+    def assign(self, *args, **params):
         sanitize = True
         if args and isinstance(args[0], dict):
             sanitize = args[0].get('sanitize', sanitize)
@@ -478,8 +461,8 @@ class ActiveRecord(object):
                 setattr(self, attr, params[attr])
         return self
 
-    def update_attributes(self, *args, **params):
-        self.assign_attributes(*args, **params)
+    def update(self, *args, **params):
+        self.assign(*args, **params)
         return self.save()
 
     def save(self, commit=True):
@@ -524,16 +507,20 @@ class ActiveRecord(object):
         return cls.find_by(*criteria, **filters) is not None
 
     @classmethod
+    def count(cls):
+        return cls.query.count()
+
+    @classmethod
     def find_by(cls, *criteria, **filters):
         return cls.where(*criteria, **filters).first()
 
     @classmethod
-    def find_each(cls, batch_size=1000):
-        return cls.select().find_each(batch_size=batch_size)
+    def find_each(cls, start=None, batch_size=None):
+        return cls.select().find_each(start=start, batch_size=batch_size)
 
     @classmethod
-    def find_in_batches(cls, batch_size=1000):
-        return cls.select().find_in_batches(batch_size=batch_size)
+    def find_in_batches(cls, start=None, batch_size=None):
+        return cls.select().find_in_batches(start=start, batch_size=batch_size)
 
     @classmethod
     def select(cls, *fields):
@@ -546,10 +533,3 @@ class ActiveRecord(object):
         q = _QueryHelper(cls)
         q.where(*criteria, **filters)
         return q
-
-
-def patch_model():
-    """Patches the `flask_sqlalchemy.Model` object to support active record flexible style queries
-    """
-    # monkey path the default Model
-    flask_sqlalchemy.Model = ActiveRecord

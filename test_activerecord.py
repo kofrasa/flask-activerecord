@@ -6,15 +6,15 @@ from datetime import datetime
 import flask
 from flask.ext import sqlalchemy
 from sqlalchemy.orm import sessionmaker
-from flask_activerecord import patch_with_active_record
+from flask_activerecord import patch_model
 
 
-patch_with_active_record()
+# path the default model
+patch_model()
 
 
 def make_todo_model(db):
     class Todo(db.Model):
-        # __tablename__ = 'todos'
         id = db.Column('todo_id', db.Integer, primary_key=True)
         title = db.Column(db.String(60))
         text = db.Column(db.String)
@@ -26,11 +26,11 @@ def make_todo_model(db):
             self.text = text
             self.done = False
             self.pub_date = datetime.utcnow()
+
     return Todo
 
 
 class BasicAppTestCase(unittest.TestCase):
-
     def setUp(self):
         app = flask.Flask(__name__)
         app.config['SQLALCHEMY_ENGINE'] = 'sqlite://'
@@ -77,7 +77,7 @@ class BasicAppTestCase(unittest.TestCase):
             self.assertTrue('insert into' in query.statement.lower())
             self.assertEqual(query.parameters[0], 'Test 1')
             self.assertEqual(query.parameters[1], 'test')
-            self.assertTrue('test_sqlalchemy.py' in query.context)
+            self.assertTrue('test_activerecord.py' in query.context)
             self.assertTrue('test_query_recording' in query.context)
 
     def test_helper_api(self):
@@ -85,7 +85,6 @@ class BasicAppTestCase(unittest.TestCase):
 
 
 class TestQueryProperty(unittest.TestCase):
-
     def setUp(self):
         self.app = flask.Flask(__name__)
         self.app.config['SQLALCHEMY_ENGINE'] = 'sqlite://'
@@ -120,7 +119,6 @@ class TestQueryProperty(unittest.TestCase):
 
 
 class SignallingTestCase(unittest.TestCase):
-
     def setUp(self):
         self.app = app = flask.Flask(__name__)
         app.config['SQLALCHEMY_ENGINE'] = 'sqlite://'
@@ -134,9 +132,11 @@ class SignallingTestCase(unittest.TestCase):
 
     def test_model_signals(self):
         recorded = []
+
         def committed(sender, changes):
             self.assertTrue(isinstance(list(changes), list))
             recorded.extend(changes)
+
         with sqlalchemy.models_committed.connected_to(committed,
                                                       sender=self.app):
             todo = self.Todo('Awesome', 'the text')
@@ -161,7 +161,6 @@ class SignallingTestCase(unittest.TestCase):
 
 
 class HelperTestCase(unittest.TestCase):
-
     def test_default_table_name(self):
         app = flask.Flask(__name__)
         app.config['SQLALCHEMY_ENGINE'] = 'sqlite://'
@@ -169,6 +168,7 @@ class HelperTestCase(unittest.TestCase):
 
         class FOOBar(db.Model):
             id = db.Column(db.Integer, primary_key=True)
+
         class BazBar(db.Model):
             id = db.Column(db.Integer, primary_key=True)
 
@@ -177,7 +177,6 @@ class HelperTestCase(unittest.TestCase):
 
 
 class PaginationTestCase(unittest.TestCase):
-
     def test_basic_pagination(self):
         p = sqlalchemy.Pagination(None, 1, 20, 500, [])
         self.assertEqual(p.page, 1)
@@ -198,26 +197,28 @@ class PaginationTestCase(unittest.TestCase):
 
 
 class BindsTestCase(unittest.TestCase):
-
     def test_basic_binds(self):
         import tempfile
+
         _, db1 = tempfile.mkstemp()
         _, db2 = tempfile.mkstemp()
 
         def _remove_files():
             import os
+
             try:
                 os.remove(db1)
                 os.remove(db2)
             except IOError:
                 pass
+
         atexit.register(_remove_files)
 
         app = flask.Flask(__name__)
         app.config['SQLALCHEMY_ENGINE'] = 'sqlite://'
         app.config['SQLALCHEMY_BINDS'] = {
-            'foo':      'sqlite:///' + db1,
-            'bar':      'sqlite:///' + db2
+            'foo': 'sqlite:///' + db1,
+            'bar': 'sqlite:///' + db2
         }
         db = sqlalchemy.SQLAlchemy(app)
 
@@ -274,7 +275,6 @@ class BindsTestCase(unittest.TestCase):
 
 
 class DefaultQueryClassTestCase(unittest.TestCase):
-
     def test_default_query_class(self):
         app = flask.Flask(__name__)
         app.config['SQLALCHEMY_ENGINE'] = 'sqlite://'
@@ -283,36 +283,38 @@ class DefaultQueryClassTestCase(unittest.TestCase):
 
         class Parent(db.Model):
             id = db.Column(db.Integer, primary_key=True)
-            children = db.relationship("Child", backref = "parents", lazy='dynamic')
+            children = db.relationship("Child", backref="parents", lazy='dynamic')
+
         class Child(db.Model):
             id = db.Column(db.Integer, primary_key=True)
             parent_id = db.Column(db.Integer, db.ForeignKey('parent.id'))
+
         p = Parent()
         c = Child()
         c.parent = p
         self.assertEqual(type(Parent.query), sqlalchemy.BaseQuery)
         self.assertEqual(type(Child.query), sqlalchemy.BaseQuery)
         self.assertTrue(isinstance(p.children, sqlalchemy.BaseQuery))
-        #self.assertTrue(isinstance(c.parents, sqlalchemy.BaseQuery))
+        # self.assertTrue(isinstance(c.parents, sqlalchemy.BaseQuery))
 
 
 class SQLAlchemyIncludesTestCase(unittest.TestCase):
-
     def test(self):
         """Various SQLAlchemy objects are exposed as attributes.
         """
         db = sqlalchemy.SQLAlchemy()
 
         import sqlalchemy as sqlalchemy_lib
+
         self.assertTrue(db.Column == sqlalchemy_lib.Column)
 
         # The Query object we expose is actually our own subclass.
         from flask.ext.sqlalchemy import BaseQuery
+
         self.assertTrue(db.Query == BaseQuery)
 
 
 class RegressionTestCase(unittest.TestCase):
-
     def test_joined_inheritance(self):
         app = flask.Flask(__name__)
         db = sqlalchemy.SQLAlchemy(app)
@@ -384,8 +386,8 @@ class RegressionTestCase(unittest.TestCase):
         db = sqlalchemy.SQLAlchemy(app)
         assert db.session.connection()
 
-class SessionScopingTestCase(unittest.TestCase):
 
+class SessionScopingTestCase(unittest.TestCase):
     def test_default_session_scoping(self):
         app = flask.Flask(__name__)
         app.config['SQLALCHEMY_ENGINE'] = 'sqlite://'
@@ -423,9 +425,7 @@ class SessionScopingTestCase(unittest.TestCase):
             assert fb not in db.session  # because a new scope is generated on each call
 
 
-
 class CommitOnTeardownTestCase(unittest.TestCase):
-
     def setUp(self):
         app = flask.Flask(__name__)
         app.config['SQLALCHEMY_ENGINE'] = 'sqlite://'
@@ -459,7 +459,6 @@ class CommitOnTeardownTestCase(unittest.TestCase):
 
 
 class StandardSessionTestCase(unittest.TestCase):
-
     def test_insert_update_delete(self):
         # Ensure _SignalTrackingMapperExtension doesn't croak when
         # faced with a vanilla SQLAlchemy session.
@@ -479,17 +478,87 @@ class StandardSessionTestCase(unittest.TestCase):
         db.create_all()
         session = Session()
         session.add(QazWsx())
-        session.flush() # issues an INSERT.
+        # issues an INSERT.
+        session.flush()
         session.expunge_all()
         qaz_wsx = session.query(QazWsx).first()
         assert qaz_wsx.x == ''
         qaz_wsx.x = 'test'
-        session.flush() # issues an UPDATE.
+        # issues an UPDATE.
+        session.flush()
         session.expunge_all()
         qaz_wsx = session.query(QazWsx).first()
         assert qaz_wsx.x == 'test'
-        session.delete(qaz_wsx) # issues a DELETE.
+        # issues a DELETE.
+        session.delete(qaz_wsx)
         assert session.query(QazWsx).first() is None
+
+
+class ActiveRecordTestCase(unittest.TestCase):
+    def setUp(self):
+        app = flask.Flask(__name__)
+        app.config['SQLALCHEMY_ENGINE'] = 'sqlite://'
+        # app.config['SQLALCHEMY_ECHO'] = True
+        app.config['TESTING'] = True
+        db = sqlalchemy.SQLAlchemy(app)
+        self.Todo = make_todo_model(db)
+        db.create_all()
+        self.todo_list = self.create_todos()
+
+    def create_todos(self):
+        todo_list = list()
+        todo_list.append(self.Todo.create(title="First Title", text="First Item"))
+        todo_list.append(self.Todo.create(title="Second Title", text="Second Item"))
+        todo_list.append(self.Todo.create(title="Third Title", text="Third Item"))
+        return todo_list
+
+    def test_class_queries(self):
+        # count
+        self.assertEqual(self.Todo.count(), 3)
+        # first
+        self.assertEqual(self.todo_list[0], self.Todo.first())
+        # all
+        self.assertEqual(self.todo_list, self.Todo.all())
+
+    def test_find_by(self):
+        # match one field
+        todo = self.Todo.find_by(title="First Title")
+        self.assertEqual(self.todo_list[0], todo)
+        # match multiple fileds
+        todo = self.Todo.find_by(title="First Title", text="First Item")
+        self.assertEqual(self.todo_list[0], todo)
+        # mismatch
+        todo = self.Todo.find_by(title="First Title", text="Second Item")
+        self.assertFalse(todo)
+
+    def test_exists(self):
+        self.assertFalse(self.Todo.exists(title="Bad Title"))
+        self.assertTrue(self.Todo.exists(title="Second Title"))
+
+    def test_find_each(self):
+        it = self.Todo.find_each()
+        for i in range(len(self.todo_list)):
+            self.assertTrue(next(it))
+
+    def test_find_in_batches(self):
+        # take 2 at a time from 3 element
+        it = self.Todo.find_in_batches(2)
+        self.assertEqual(2, len(next(it)))
+        self.assertEqual(1, len(next(it)))
+
+    def test_json_serialize(self):
+        todo_json = self.todo_list[0].to_dict()
+        self.assertTrue(isinstance(todo_json, dict))
+        # check for presence of some fields
+        self.assertTrue('title' in todo_json and 'text' in todo_json)
+        # check number of fields in model
+        self.assertEqual(5, len(todo_json))
+
+    def test_delete_and_destroy(self):
+        self.todo_list[0].delete()
+        self.assertEqual(2, self.Todo.count())
+        self.Todo.destroy(2, 3)
+        self.assertEqual(0, self.Todo.count())
 
 
 def suite():
