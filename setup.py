@@ -2,7 +2,7 @@
 Flask-ActiveRecord
 ------------------
 
-ActiveRecord patch for Flask-SQLAlchemy models which provides flexible query methods
+Adds active record support for Flask-SQLAlchemy models
 """
 
 from setuptools import setup
@@ -15,9 +15,9 @@ setup(
     author='Francis Asante',
     author_email='kofrasa@gmail.com',
     url='http://github.com/kofrasa/flask-activerecord',
-    description='ActiveRecord patch for Flask-SQLAlchemy models which provides flexible query methods',
+    description='ActiveRecord patch for Flask-SQLAlchemy model',
     long_description=__doc__,
-    packages=['flask_activerecord'],
+    py_modules=['flask_activerecord'],
     include_package_data=True,
     zip_safe=False,
     platforms='any',

@@ -1,12 +1,12 @@
 # Flask-ActiveRecord
-ActiveRecord patch for Flask-SQLAlchemy models which provides flexible and dynamic query methods
+Adds ActiveRecord features to Flask-SQLAlchemy models
 
 ## Getting Started
 ```python
 from flask.ext.sqlalchemy import SQLAlchemy
 from flask.ext.activerecord import patch_model
 
-# path in the active record model. this MUST be done before creating your SQLAlchemy object
+# patch sqlalchemy model first. this MUST be done before creating your SQLAlchemy object
 patch_model()
 
 db = SQLAlchemy()
@@ -21,7 +21,6 @@ class User(db.Model):
     username = db.Column(db.String, unique=True)
     password = db.Column(db.String)
     action_figure = db.Column(db.String)
-    
     
 
 # create and return a new model
@@ -77,7 +76,7 @@ User.destroy(1,2,3)
 User.select('username', 'action_figure').where(action_figure=['batman','superman','robin']).offset(10).limit(20).all()
 ```
 
-## Silent Features
+## Extra Features
 1. When filtering you may pass SQLAlchemy criteria expressions followed by keyword arguments
 2. A few conventions apply when using select/where query methods
    - for where, if the type of value is a tuple(), active record expects two entries and generates a BETWEEN criteria
@@ -85,7 +84,6 @@ User.select('username', 'action_figure').where(action_figure=['batman','superman
    - You may pass dot-separated names in select() to include related models
    
 ```python
-# examples
 
 # find users where id IN (1, 2, 3)
 User.where(id=[1,2,3])

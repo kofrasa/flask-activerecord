@@ -2,21 +2,25 @@
 """
     flaskext.activerecord
     ~~~~~~~~~~~~~~~~~~~~~
-    Path and extend `flask_sqlalchemy.Model` with ActiveRecord support.
-    :copyright: (c) 2014 by Francis Asante
+    Patch and extend `flask_sqlalchemy.Model` with ActiveRecord support.
+
+    :copyright: (c) 2015 by Francis Asante
     :license: BSD, see LICENSE for more details.
+    :version: 0.1
 """
 
 import datetime as dt
 import flask_sqlalchemy
-from sqlalchemy.orm import ColumnProperty, RelationshipProperty, object_mapper, class_mapper, defer, lazyload
+from sqlalchemy.orm import ColumnProperty, RelationshipProperty, \
+    object_mapper, class_mapper, defer, lazyload
 
 
-__slots__ = ('patch_model', 'json_serialize')
+__all__ = ['patch_model', 'json_serialize']
 
 
 def patch_model():
-    """Patches the `flask_sqlalchemy.Model` object to support active record flexible style queries
+    """Patches the `flask_sqlalchemy.Model` object to support active record
+    flexible style queries
     """
     # monkey path the default Model with ActiveRecord
     flask_sqlalchemy.Model = ActiveRecord
@@ -38,12 +42,13 @@ def _get_primary_keys(obj):
     primary keys and `'id'` is not one of them, only the name of the first
     one in the list of primary keys is returned.
     """
-    return [key for key, val in _get_columns(obj).iteritems() if val.is_primary()]
+    return [key for key, val in _get_columns(obj).iteritems()
+            if val.is_primary()]
 
 
 def _get_columns(model):
-    """Returns a dictionary-like object containing all the columns properties of the
-    specified `model` class.
+    """Returns a dictionary-like object containing all the columns properties
+    of the specified `model` class.
     """
     return {c.key: c for c in _get_mapper(model).iterate_properties
             if isinstance(c, ColumnProperty)}
@@ -140,7 +145,7 @@ def _model_to_dict(models, *fields, **props):
 
 
 def json_serialize(value):
-    """Returns a JSON serializable python type of the given value
+    """Returns a JSON serializable type of the given value
 
     :param value: the object to return as JSON a json value
     """
@@ -180,8 +185,8 @@ def _select(model, *fields):
 
     options = []
 
-    # ensure PKs are included and defer unrequested attributes (including related)
-    # NB: we intentionally allows fields like "related.attribute" to pass through
+    # include PKs and defer unrequested attributes (including related)
+    # NB: intentionally allows fields like "related.attribute" to pass through
     for attr in (c.key for c in _get_mapper(model).iterate_properties):
         if attr not in fields:
             if attr in pk_columns:
@@ -213,8 +218,11 @@ def _where(model, *criteria, **filters):
         # select valid filters only
         columns = {c.name: c for c in _get_mapper(model).columns
                    if c.name in filter_keys}
-        relations = {c.key: c for c in _get_mapper(model).iterate_properties
-                     if isinstance(c, RelationshipProperty) and c.key in filter_keys}
+        relations = {
+            c.key: c for c in _get_mapper(model).iterate_properties
+            if isinstance(c, RelationshipProperty) and
+            c.key in filter_keys
+        }
 
         for attr, rel in relations.items():
             value = filters[attr]
@@ -222,7 +230,8 @@ def _where(model, *criteria, **filters):
                 value = [value]
                 # validate type of object
             for v in value:
-                assert not v or isinstance(v, rel.mapper.class_), "Type mismatch"
+                assert not v or isinstance(v, rel.mapper.class_), \
+                    "Type mismatch"
 
             if len(value) == 1:
                 conditions.append(getattr(model, attr) == value[0])
@@ -237,16 +246,16 @@ def _where(model, *criteria, **filters):
                 # ensure only two values in tuple
                 if len(value) != 2:
                     raise ValueError(
-                        "Expected tuple of size 2 generate BETWEEN expression for column '%s.%s'" % (
-                            model.__name__, attr))
+                        "Expected tuple of size 2 generate BETWEEN expression "
+                        "for column '%s.%s'" % (model.__name__, attr))
                 lower, upper = min(value), max(value)
                 value = (lower, upper)
             elif not isinstance(value, list):
                 value = [value]
             elif not value:
                 raise ValueError(
-                    "Expected non-empty list to generate IN expression for column '%s.%s'" % (
-                        model.__name__, attr))
+                    "Expected non-empty list to generate IN expression "
+                    "for column '%s.%s'" % (model.__name__, attr))
 
             if len(value) == 1:
                 # generate = statement
@@ -354,12 +363,6 @@ class _QueryHelper(object):
                 yield obj
 
     def find_in_batches(self, start=None, batch_size=None):
-        """
-        Retrieve records in batches returning a generator for efficient iteration
-        :param start:
-        :param batch_size:
-        :return:
-        """
         offset = batch_size and start or 0
         batch_size = batch_size or start or 1000
 
@@ -405,25 +408,34 @@ class ActiveRecord(object):
     user.password = 'something secret'
     user.save(False) # add to session but do not flush just yet
 
-    # do some more work and flush with saving some other objects
+    # do some more work and flush all objects
     db.session.commit()
 
-    # batch updates
-    # note that password will not be updated. it is included in _attr_protected tuple
+    # batch fields update
+    # password will not update due to `_attr_protected`.
+    # will persist to database
     user.update(first_name='John', last_name='Doe', password='new_password')
 
     # Queries
-    User.count() # return 1
-    User.all() # return [User<id=1>]
-    User.first() # return the first entry
-    User.find_by(username='kofrasa') # return first entry matching criteria
-    User.where(last_name='Asante').all() # return all entries matching criteria
+    User.count()
+    User.all() # get all users in a list
+    User.first() # return the first user
+    User.find_by(username='kofrasa') # return first user matching criteria
 
+    # efficiently iterate over all users
+    for user in User.find_each():
+        # do something with user
+        pass
+
+    # efficiently iterate in batches
+    for users in User.where(last_name='Asante').find_in_batches(batch_size=10):
+        # do something with users
+        pass
     """
     __abstract__ = True
 
     # : the query class used.  The :attr:`query` attribute is an instance
-    #: of this class.  By default a :class:`BaseQuery` is used.
+    # : of this class.  By default a :class:`BaseQuery` is used.
     query_class = flask_sqlalchemy.BaseQuery
 
     #: an instance of :attr:`query_class`.  Can be used to query the
@@ -442,8 +454,8 @@ class ActiveRecord(object):
     def __repr__(self):
         return "%s(\n%s\n)" % (
             self.__class__.__name__,
-            ', \n'.join(["  %s=%r" % (c, getattr(self, c)) for c in self.__class__.get_columns()])
-        )
+            ', \n'.join(["  %s=%r" % (c, getattr(self, c)) for c in
+                         self.__class__.get_columns()]))
 
     def assign(self, *args, **params):
         sanitize = True
@@ -457,7 +469,10 @@ class ActiveRecord(object):
                 continue
             if sanitize and attr in self._attr_protected:
                 continue
-            if hasattr(self, attr) and not sanitize or (not self._attr_accessible or attr in self._attr_accessible):
+            if hasattr(self, attr) \
+                    and not sanitize \
+                    or (not self._attr_accessible
+                        or attr in self._attr_accessible):
                 setattr(self, attr, params[attr])
         return self
 
@@ -476,6 +491,8 @@ class ActiveRecord(object):
         return commit and self.query.session.commit()
 
     def to_dict(self, *fields, **props):
+        """Serialize the model to a `dict`
+        """
         return _model_to_dict(self, *fields, **props)
 
     @classmethod
@@ -512,14 +529,28 @@ class ActiveRecord(object):
 
     @classmethod
     def find_by(cls, *criteria, **filters):
+        """An alias to using `where().first()`
+        """
         return cls.where(*criteria, **filters).first()
 
     @classmethod
     def find_each(cls, start=None, batch_size=None):
+        """Fetch records efficiently
+
+        :param start: the start position
+        :param batch_size: the batch size
+        :return: an iterable generator yield each record
+        """
         return cls.select().find_each(start=start, batch_size=batch_size)
 
     @classmethod
     def find_in_batches(cls, start=None, batch_size=None):
+        """Fetch records in batches efficiently
+
+        :param start: the start position
+        :param batch_size: the batch size
+        :return: an iterable generator yielding each batch
+        """
         return cls.select().find_in_batches(start=start, batch_size=batch_size)
 
     @classmethod
