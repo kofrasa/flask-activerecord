@@ -22,15 +22,13 @@ setup(
     zip_safe=False,
     platforms='any',
     install_requires=[
-        'Flask>=0.10',
-        'SQLAlchemy',
-        'Flask-SQLAlchemy'
+        'Flask-SQLAlchemy>=2.0'
     ],
     test_suite='test_activerecord.suite',
     classifiers=[
         'Environment :: Web Environment',
         'Intended Audience :: Developers',
-        'License :: OSI Approved :: MIT License',
+        'License :: OSI Approved :: BSD License',
         'Operating System :: OS Independent',
         'Programming Language :: Python',
         'Topic :: Internet :: WWW/HTTP :: Dynamic Content',
