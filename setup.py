@@ -2,7 +2,7 @@
 Flask-ActiveRecord
 ------------------
 
-Adds active record support for Flask-SQLAlchemy models
+Active record patch for Flask-SQLAlchemy model
 """
 
 from setuptools import setup

@@ -12,7 +12,10 @@ patch_model()
 db = SQLAlchemy()
 # initialize with your `app` object
 db.init_app(app) 
+```
 
+## Example
+```python
 class User(db.Model):
     _attr_protected = ('id', 'username', 'password') # protected from batch update
     _attr_hidden = ('password',) # hidden from dictionary serialization
@@ -22,7 +25,6 @@ class User(db.Model):
     password = db.Column(db.String)
     action_figure = db.Column(db.String)
     
-
 # create and return a new model
 user = User.create(username='kofrasa', password='my_secret')
 
@@ -74,20 +76,13 @@ User.destroy(1,2,3)
 
 # chain operations together
 User.select('username', 'action_figure').where(action_figure=['batman','superman','robin']).offset(10).limit(20).all()
+
+# filter with IN clause using python `list`
+User.where(id=[1,2,3]) # generate "id IN (1,2,3)"
+
+# filter with BETWEEN using python `tuple`
+User.where(id=(1, 5)) # generates "id BETWEEN 1 AND 5"
 ```
 
-## Extra Features
-1. When filtering you may pass SQLAlchemy criteria expressions followed by keyword arguments
-2. A few conventions apply when using select/where query methods
-   - for where, if the type of value is a tuple(), active record expects two entries and generates a BETWEEN criteria
-   - for where, if the type of value is a list() or set(), active record generates an IN criteria
-   - You may pass dot-separated names in select() to include related models
-   
-```python
-
-# find users where id IN (1, 2, 3)
-User.where(id=[1,2,3])
-
-# find users where id BETWEEN 1 AND 5
-User.where(id=(1, 5))
-```
+## License
+BSD
