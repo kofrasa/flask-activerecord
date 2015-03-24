@@ -5,6 +5,7 @@ Enable ActiveRecord support for Flask-SQLAlchemy models and enjoy rails-style qu
 install
 -------
 install from pip
+
 .. code:: bash
 
     $ pip install flask-activerecord
