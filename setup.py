@@ -2,21 +2,27 @@
 Flask-ActiveRecord
 ------------------
 
-Active record patch for Flask-SQLAlchemy model
+An active record patch for Flask-SQLAlchemy model
 """
 
 from setuptools import setup
+import flask_activerecord as ar
+
+
+def read_file(name):
+    with open(name, 'r') as f:
+        return f.read()
 
 
 setup(
     name='Flask-ActiveRecord',
-    version='0.1',
+    version=ar.__version__,
     license='BSD',
     author='Francis Asante',
     author_email='kofrasa@gmail.com',
-    url='http://github.com/kofrasa/flask-activerecord',
-    description='ActiveRecord patch for Flask-SQLAlchemy model',
-    long_description=__doc__,
+    url='https://github.com/kofrasa/flask-activerecord',
+    description='An active record patch for Flask-SQLAlchemy models',
+    long_description=read_file('README.rst'),
     py_modules=['flask_activerecord'],
     include_package_data=True,
     zip_safe=False,

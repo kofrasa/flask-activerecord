@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-    flaskext.activerecord
-    ~~~~~~~~~~~~~~~~~~~~~
+    flask.ext.activerecord
+    ~~~~~~~~~~~~~~~~~~~~~~
     Patch and extend `flask_sqlalchemy.Model` with ActiveRecord support.
 
     :copyright: (c) 2015 by Francis Asante
     :license: BSD, see LICENSE for more details.
-    :version: 0.1
 """
+
+__version__ = '0.1'
+__all__ = ['patch_model', 'json_serialize']
 
 import datetime as dt
 import flask_sqlalchemy
@@ -15,12 +17,8 @@ from sqlalchemy.orm import ColumnProperty, RelationshipProperty, \
     object_mapper, class_mapper, defer, lazyload
 
 
-__all__ = ['patch_model', 'json_serialize']
-
-
 def patch_model():
-    """Patches the `flask_sqlalchemy.Model` object to support active record
-    flexible style queries
+    """Patches the `flask_sqlalchemy.Model` object to support active record style queries
     """
     # monkey path the default Model with ActiveRecord
     flask_sqlalchemy.Model = ActiveRecord
