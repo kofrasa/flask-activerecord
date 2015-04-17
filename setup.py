@@ -16,7 +16,6 @@ ActiveRecord support for Flask-SQLAlchemy models
     db = SQLAlchemy(app)
 
     # example model
-
     class User(db.Model):
         __attribute_filters__ = {
             'accessible': ('fullname', 'country'),
