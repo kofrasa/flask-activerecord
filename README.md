@@ -6,35 +6,35 @@ Install
 -------
 install from pip
 ```
-    $ pip install flask-activerecord
+$ pip install flask-activerecord
 ```
 
 Usage
 -----
 ```python
 
-    from flask.ext.sqlalchemy import SQLAlchemy
-    from flask.ext.activerecord import patch_model
-    
-    # patch model first
-    patch_model()
+from flask.ext.sqlalchemy import SQLAlchemy
+from flask.ext.activerecord import patch_model
 
-    app = Flask(__name__)
-    db = SQLAlchemy(app)
+# patch model first
+patch_model()
 
-    # example model
+app = Flask(__name__)
+db = SQLAlchemy(app)
 
-    class User(db.Model):
-        __attribute_filters__ = {
-            'accessible': ('fullname', 'country'),
-            'protected': ('id', 'email', 'password')
-            'hidden': ('password', )
-        }
+# example model
 
-        email = db.Column(db.String, unique=True)
-        password = db.Column(db.String, unique=True)
-        fullname = db.Column(db.String)
-        country = db.Column(db.String(2))
+class User(db.Model):
+    __attribute_filters__ = {
+        'accessible': ('fullname', 'country'),
+        'protected': ('id', 'email', 'password')
+        'hidden': ('password', )
+    }
+
+    email = db.Column(db.String, unique=True)
+    password = db.Column(db.String, unique=True)
+    fullname = db.Column(db.String)
+    country = db.Column(db.String(2))
 ```
 
 License
