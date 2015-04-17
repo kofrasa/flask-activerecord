@@ -1,16 +1,17 @@
 Flask-ActiveRecord
 ==================
-Enable ActiveRecord support pattern for Flask-SQLAlchemy models and enjoy rails-style queries
+ActiveRecord support for Flask-SQLAlchemy models
 
 Install
 -------
-install from pip ::
-
+install from pip
+```
     $ pip install flask-activerecord
+```
 
 Usage
 -----
-::
+```python
 
     from flask.ext.sqlalchemy import SQLAlchemy
     from flask.ext.activerecord import patch_model
@@ -34,6 +35,7 @@ Usage
         password = db.Column(db.String, unique=True)
         fullname = db.Column(db.String)
         country = db.Column(db.String(2))
+```
 
 License
 -------
