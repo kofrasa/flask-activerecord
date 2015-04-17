@@ -30,6 +30,25 @@ def make_todo_model(db):
     return Todo
 
 
+def make_user_model(db):
+    class User(db.Model):
+        __tablename__ = 'user'
+        id = db.Column(db.Integer)
+        name = db.Column(db.String(60))
+        todo_id = db.Column(db.Integer, db.ForeignKey('todo.todo_id'))
+        todo = db.relationship('Todo')
+
+        __table_args__ = (
+            db.PrimaryKeyConstraint('id'),
+        )
+
+        def __init__(self, name, todo):
+            self.name = name
+            self.todo = todo
+
+    return User
+
+
 class BasicAppTestCase(unittest.TestCase):
     def setUp(self):
         app = flask.Flask(__name__)
@@ -186,10 +205,10 @@ class PaginationTestCase(unittest.TestCase):
         self.assertEqual(p.pages, 25)
         self.assertEqual(p.next_num, 2)
         self.assertEqual(list(p.iter_pages()),
-                         [1, 2, 3, 4, 5, None, 24, 25])
+            [1, 2, 3, 4, 5, None, 24, 25])
         p.page = 10
         self.assertEqual(list(p.iter_pages()),
-                         [1, 2, None, 8, 9, 10, 11, 12, 13, 14, None, 24, 25])
+            [1, 2, None, 8, 9, 10, 11, 12, 13, 14, None, 24, 25])
 
     def test_pagination_pages_when_0_items_per_page(self):
         p = sqlalchemy.Pagination(None, 1, 0, 500, [])
@@ -498,27 +517,44 @@ class ActiveRecordTestCase(unittest.TestCase):
     def setUp(self):
         app = flask.Flask(__name__)
         app.config['SQLALCHEMY_ENGINE'] = 'sqlite://'
-        # app.config['SQLALCHEMY_ECHO'] = True
+        app.config['SQLALCHEMY_ECHO'] = False
         app.config['TESTING'] = True
         db = sqlalchemy.SQLAlchemy(app)
         self.Todo = make_todo_model(db)
+        self.User = make_user_model(db)
         db.create_all()
-        self.todo_list = self.create_todos()
+        self.app = app
+        self.todo_list = self.create_models()
 
-    def create_todos(self):
+    def create_models(self):
         todo_list = list()
         todo_list.append(self.Todo.create(title="First Title", text="First Item"))
         todo_list.append(self.Todo.create(title="Second Title", text="Second Item"))
         todo_list.append(self.Todo.create(title="Third Title", text="Third Item"))
+
+        self.User.create(name="Bill", todo=todo_list[0])
+        self.User.create(name="Jane", todo=todo_list[1])
         return todo_list
 
-    def test_class_queries(self):
-        # count
+    def test_count(self):
         self.assertEqual(self.Todo.count(), 3)
-        # first
+        self.assertEqual(self.Todo.where(id=2).count(), 1)
+
+    def test_first(self):
         self.assertEqual(self.todo_list[0], self.Todo.first())
-        # all
+
+    def test_all(self):
         self.assertEqual(self.todo_list, self.Todo.all())
+
+    def test_select(self):
+        self.Todo.select('title').all()
+        self.User.select('id', 'todo').all()
+
+    def test_update(self):
+        todo = self.Todo.first()
+        text = "Primary Item"
+        todo.update(text=text)
+        self.assertEqual(text, self.Todo.first().text)
 
     def test_find_by(self):
         # match one field
@@ -532,8 +568,8 @@ class ActiveRecordTestCase(unittest.TestCase):
         self.assertFalse(todo)
 
     def test_exists(self):
-        self.assertFalse(self.Todo.exists(title="Bad Title"))
-        self.assertTrue(self.Todo.exists(title="Second Title"))
+        self.assertFalse(self.Todo.where(title="Bad Title").exists())
+        self.assertTrue(self.Todo.where(title="Second Title").exists())
 
     def test_find_each(self):
         it = self.Todo.find_each()
@@ -546,12 +582,10 @@ class ActiveRecordTestCase(unittest.TestCase):
         self.assertEqual(2, len(next(it)))
         self.assertEqual(1, len(next(it)))
 
-    def test_json_serialize(self):
+    def test_json_value(self):
         todo_json = self.todo_list[0].to_dict()
         self.assertTrue(isinstance(todo_json, dict))
-        # check for presence of some fields
         self.assertTrue('title' in todo_json and 'text' in todo_json)
-        # check number of fields in model
         self.assertEqual(5, len(todo_json))
 
     def test_delete_and_destroy(self):

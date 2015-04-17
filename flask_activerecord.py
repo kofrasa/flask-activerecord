@@ -9,12 +9,12 @@
 """
 
 __version__ = '0.1'
-__all__ = ['patch_model', 'json_serialize']
+__all__ = ['patch_model', 'json_value']
 
 import datetime as dt
 import flask_sqlalchemy
-from sqlalchemy.orm import ColumnProperty, RelationshipProperty, \
-    object_mapper, class_mapper, defer, lazyload
+from sqlalchemy.orm import RelationshipProperty, \
+    object_mapper, class_mapper, defer, eagerload
 
 
 def patch_model():
@@ -40,23 +40,19 @@ def _get_primary_keys(obj):
     primary keys and `'id'` is not one of them, only the name of the first
     one in the list of primary keys is returned.
     """
-    return [key for key, val in _get_columns(obj).iteritems()
-            if val.is_primary()]
+    return [key for key, val in _get_mapper(obj).c.items() if val.primary_key]
 
 
 def _get_columns(model):
-    """Returns a dictionary-like object containing all the columns properties
-    of the specified `model` class.
+    """Returns a `list` of columns names of the given model
     """
-    return {c.key: c for c in _get_mapper(model).iterate_properties
-            if isinstance(c, ColumnProperty)}
+    return [key for key, val in _get_mapper(model).c.items()]
 
 
 def _get_relations(model):
-    """Get relationship names and properties from model
+    """Return a `list` of relationship names or the given model
     """
-    return {c.key: c for c in _get_mapper(model).iterate_properties
-            if isinstance(c, RelationshipProperty)}
+    return [c.key for c in _get_mapper(model).iterate_properties if isinstance(c, RelationshipProperty)]
 
 
 def _model_to_dict(models, *fields, **props):
@@ -93,7 +89,7 @@ def _model_to_dict(models, *fields, **props):
     model_attr = set(fields) - (set(_exclude) | related_attr)
 
     # check if there are relationships
-    related_fields = _get_relations(models[0]).keys()
+    related_fields = _get_relations(models[0])
     related_map = {}
     # check if remaining fields are valid related attributes
     for k in related_attr:
@@ -115,13 +111,16 @@ def _model_to_dict(models, *fields, **props):
 
     for model in models:
         data = {}
+
+        hidden_attributes = model.__attribute_filters__.get('hidden', EMPTY)
+
         # handle column attributes
         for k in model_attr:
-            if k in getattr(model, '_attr_hidden', []):
+            if k in hidden_attributes:
                 continue
             v = getattr(model, k)
             # change dates to human readable format
-            data[k] = json_serialize(v)
+            data[k] = json_value(v)
 
         # handle relationships
         for k in related_map:
@@ -134,15 +133,14 @@ def _model_to_dict(models, *fields, **props):
             data[k] = props[k]
             if callable(data[k]):
                 data[k] = data[k](model)
-        # add to results
+
         result.append(data)
 
-    # get correct response
     result = result if has_many else result[0]
     return result
 
 
-def json_serialize(value):
+def json_value(value):
     """Returns a JSON serializable type of the given value
 
     :param value: the object to return as JSON a json value
@@ -150,54 +148,41 @@ def json_serialize(value):
     if value is None or isinstance(value, (int, float, str, bool)):
         return value
     elif isinstance(value, (list, tuple, set)):
-        return [json_serialize(v) for v in value]
+        return [json_value(v) for v in value]
     elif isinstance(value, dict):
-        for k, v in value.items():
-            value[k] = json_serialize(v)
-        return value
+        return {k: json_value(value[k]) for k in value}
     elif isinstance(value, (dt.datetime, dt.date, dt.time)):
         if isinstance(value, (dt.datetime, dt.time)):
             value = value.replace(microsecond=0)
         return value.isoformat()
     elif hasattr(value, 'to_dict') and callable(getattr(value, 'to_dict')):
-        return value.to_dict()
+        return json_value(value.to_dict())
     else:
         return str(value)
 
 
-def _select(model, *fields):
+def _select_options(model, *fields):
     """Projects given columns to be included in query output
     """
-    pk_columns = _get_primary_keys(model)
-    all_columns = _get_columns(model).keys()
-    relations = _get_relations(model).keys()
+    pk_columns = set(_get_primary_keys(model))
+    all_columns = set(_get_columns(model))
+    relations = set(_get_relations(model))
 
-    fields = list(set(fields)) if fields else all_columns
-
-    # select all column properties if none is specified
-    for attr in fields:
-        if attr in all_columns:
-            break
-    else:
-        fields.extend(all_columns)
-
+    fields = set(fields) | pk_columns if fields else all_columns
     options = []
 
     # include PKs and defer unrequested attributes (including related)
     # NB: intentionally allows fields like "related.attribute" to pass through
-    for attr in (c.key for c in _get_mapper(model).iterate_properties):
-        if attr not in fields:
-            if attr in pk_columns:
-                fields.append(attr)
-            elif attr in all_columns:
-                options.append(defer(attr))
-            # relationships
-            elif attr in relations:
-                options.append(lazyload(attr))
+
+    for key in (all_columns - fields):
+        options.append(defer(getattr(model, key)))
+    for key in (relations & fields):
+        options.append(eagerload(getattr(model, key)))
+
     return options
 
 
-def _where(model, *criteria, **filters):
+def _where_clause(model, *criteria, **filters):
     """Builds a list of where conditions for this applying the correct operators
     for representing the values.
 
@@ -205,146 +190,163 @@ def _where(model, *criteria, **filters):
     `IN` expression is generated for list/set of simple values
     `BETWEEN` expression is generated for 2-tuple of simple values
     """
-    conditions = []
-    conditions.extend(criteria)
+    conditions = list(criteria)
 
-    # build criteria from filter
-    if filters:
+    if not filters:
+        return conditions
 
-        filter_keys = filters.keys()
+    for key in set(_get_relations(model)) & set(filters.keys()):
+        value = filters[key]
+        if not isinstance(value, list):
+            value = [value]
 
-        # select valid filters only
-        columns = {c.name: c for c in _get_mapper(model).columns
-                   if c.name in filter_keys}
-        relations = {
-            c.key: c for c in _get_mapper(model).iterate_properties
-            if isinstance(c, RelationshipProperty) and
-            c.key in filter_keys
-        }
+        if len(value) == 1:
+            conditions.append(getattr(model, key) == value[0])
+        else:
+            # Not implemented yet as of SQLAlchemy 0.7.9
+            conditions.append(getattr(model, key).in_(value))
 
-        for attr, rel in relations.items():
-            value = filters[attr]
-            if not isinstance(value, list):
-                value = [value]
-                # validate type of object
-            for v in value:
-                assert not v or isinstance(v, rel.mapper.class_), \
-                    "Type mismatch"
+    for key in set(_get_columns(model)) & set(filters.keys()):
+        value = filters[key]
 
-            if len(value) == 1:
-                conditions.append(getattr(model, attr) == value[0])
-            else:
-                # Not implemented yet as of SQLAlchemy 0.7.9
-                conditions.append(getattr(model, attr).in_(value))
-
-        for attr, prop in columns.items():
-            value = filters[attr]
-
-            if isinstance(value, tuple):
-                # ensure only two values in tuple
-                if len(value) != 2:
-                    raise ValueError(
-                        "Expected tuple of size 2 generate BETWEEN expression "
-                        "for column '%s.%s'" % (model.__name__, attr))
-                lower, upper = min(value), max(value)
-                value = (lower, upper)
-            elif not isinstance(value, list):
-                value = [value]
-            elif not value:
+        if isinstance(value, tuple):
+            # ensure only two values in tuple
+            if len(value) != 2:
                 raise ValueError(
-                    "Expected non-empty list to generate IN expression "
-                    "for column '%s.%s'" % (model.__name__, attr))
+                    "Expected tuple of size 2 generate BETWEEN expression "
+                    "for column '%s.%s'" % (model.__name__, key))
+            lower, upper = min(value), max(value)
+            value = (lower, upper)
+        elif not isinstance(value, list):
+            value = [value]
+        elif not value:
+            raise ValueError(
+                "Expected non-empty list to generate IN expression "
+                "for column '%s.%s'" % (model.__name__, key))
 
-            if len(value) == 1:
-                # generate = statement
-                value = getattr(model, attr) == value[0]
-            elif isinstance(value, tuple):
-                # generate BETWEEN statement
-                lower = min(value)
-                upper = max(value)
-                value = getattr(model, attr).between(lower, upper)
-            else:
-                # generate IN statement
-                value = getattr(model, attr).in_(value)
+        if len(value) == 1:
+            value = getattr(model, key) == value[0]
+        elif isinstance(value, tuple):
+            value = getattr(model, key).between(value[0], value[1])
+        else:
+            value = getattr(model, key).in_(value)
 
-            conditions.append(value)
+        conditions.append(value)
 
     return conditions
 
 
+def _primary_key(cls):
+    """Return the primary key column"""
+    return getattr(cls, 'id')
+
+
 class _QueryHelper(object):
+    """
+    A query helper interface also used to proxy query methods
+    """
     def __init__(self, model):
-        self._model_cls = model
-        self._options = []
-        self._filters = []
-        self._order_by = []
-        self._group_by = []
+        self._model = model
+        self._scalar = None
+        self._options = None
+        self._filters = None
+        self._order_by = None
+        self._group_by = None
         self._having = None
         self._offset = None
         self._limit = None
-        self._orm_query = None
+        self._compiled = None
 
     @property
     def _query(self):
-        if not self._orm_query:
-            sql = self._model_cls.query
-            if not self._options:
-                # force lazy loading of unselected relations
+        if not self._compiled:
+
+            session = self._model.query.session
+
+            if self._scalar is not None:
+                self._model = self._scalar
+                self._options = []
+            elif not self._options:
                 self.select()
-            sql = sql.options(*self._options)
+
+            query = session.query(self._model).options(*self._options)
+
             if self._filters:
-                sql = sql.filter(*self._filters)
+                query = query.filter(*self._filters)
             if self._order_by:
-                sql = sql.order_by(*self._order_by)
+                query = query.order_by(*self._order_by)
             if self._group_by:
-                sql = sql.group_by(*self._group_by)
+                query = query.group_by(*self._group_by)
                 if self._having:
-                    sql = sql.having(self._having)
+                    query = query.having(self._having)
             if self._offset and self._offset > 0:
-                sql = sql.offset(self._offset)
-                if self._limit and self._limit > 0:
-                    sql = sql.limit(self._limit)
-            self._orm_query = sql
-        return self._orm_query
+                query = query.offset(self._offset)
+            if self._limit and self._limit > 0:
+                query = query.limit(self._limit)
+            self._compiled = query
+        return self._compiled
 
     def all(self):
         return self._query.all()
 
     def first(self):
+        """Return the first record of this model"""
         return self._query.first()
 
     def one(self):
         return self._query.one()
 
     def count(self):
-        return self._query.count()
+        """Return a count of records in the query"""
+        from sqlalchemy import func
+
+        self._scalar = func.count(_primary_key(self._model))
+        return self._query.scalar()
 
     def delete(self):
+        """Delete all records matched by the query"""
         return self._query.delete()
+
+    def exists(self):
+        """Returns true if records exist for this query"""
+        return bool(self.count())
 
     def join(self, *props, **kwargs):
         return self._query.join(*props, **kwargs)
 
     def where(self, *criteria, **filters):
-        conditions = _where(self._model_cls, *criteria, **filters)
-        self._filters.extend(conditions)
+        """Specify conditions for use in query.
+         Multiple conditions are join with an `AND` clause. Example::
+
+            User.where(User.fullname=='John Smith', country=['US', 'GH']).all()
+
+        :param \*criteria: a tuple of :class:`SQLAlchemy` criteria expressions
+        :param \**filters: extra filter expressions
+        :return:
+        """
+        self._filters = _where_clause(self._model, *criteria, **filters)
         return self
 
-    def select(self, *fields):
-        options = _select(self._model_cls, *fields)
-        self._options.extend(options)
+    def select(self, *columns):
+        """Columns to project in query. Example::
+
+            User.select('id', 'fullname').all()
+
+        :param \*columns: the column names
+        """
+        self._options = _select_options(self._model, *columns)
         return self
 
-    def order_by(self, *fields):
-        self._order_by.extend(list(fields))
+    def order_by(self, *expressions):
+        self._order_by = expressions
         return self
 
     def group_by(self, *criteria):
-        self._group_by.extend(criteria)
+        self._group_by = criteria
         return self
 
-    def having(self, criterion):
-        self._having = criterion
+    def having(self, *criteria):
+        self._having = criteria
         return self
 
     def offset(self, offset):
@@ -356,11 +358,32 @@ class _QueryHelper(object):
         return self
 
     def find_each(self, start=None, batch_size=None):
+        """Fetch each record efficiently. Similar to :meth:`find_in_batches`
+        but yields single objects. Example::
+
+            # starting from offset 10 in batches of 100
+            for user in User.find_each(10, 100):
+                # do something with user
+                pass
+        """
         for rows in self.find_in_batches(start, batch_size):
             for obj in rows:
                 yield obj
 
     def find_in_batches(self, start=None, batch_size=None):
+        """Fetch records in batches. Example::
+
+            for user_batch in User.find_in_batches(100):
+                # do something with batch
+                pass
+
+        If the batch_size is not given, the `start` index value is used as the `batch_size`
+        if provided and `start` is set to zero.
+
+        :param start: the start position
+        :param batch_size: the batch size
+        :return: an generator yielding record batches
+        """
         offset = batch_size and start or 0
         batch_size = batch_size or start or 1000
 
@@ -379,75 +402,40 @@ class _QueryHelper(object):
                 offset += batch_size
 
 
-class ActiveRecord(object):
-    """A implementation of the `ActiveRecord` pattern
+EMPTY = tuple()
 
-    Example:
 
-    class User(db.Model):
-        _attr_protected = ('id', 'email', 'username', 'password')
-        _attr_accessible = tuple('first_name', 'last_name')
-        _attr_hidden = ('password',)
+class ActiveRecord(flask_sqlalchemy.Model):
+    """A implementation of the `ActiveRecord` pattern for FlaskSQLAlchemy models
 
-        username = db.Column(db.String(80), unique=True)
-        password = db.Column(db.String(80), unique=True)
-        email = db.Column(db.String(120), unique=True)
-        first_name = db.Column(db.String(80), unique=True)
-        last_name = db.Column(db.String(80), unique=True)
+    ..code:: python
 
-    user = User.create(username='kofrasa', password='kofrasa', email='kofrasa@gmail.com')
-    user_from_db = User.find(user.id)
-    # user == user_from_db
-    user.first_name = 'Francis'
-    user.save() # changes have been reflected to db
+        from flask import Flask
+        from flask_activerecord import patch_model
+        from flask_sqlalchemy import SQLAlchemy
 
-    # for batch changes
-    user.last_name = 'Asante'
-    user.password = 'something secret'
-    user.save(False) # add to session but do not flush just yet
+        patch_model()
 
-    # do some more work and flush all objects
-    db.session.commit()
+        app = Flask(__name__)
+        db = SQLAlchemy(app)
 
-    # batch fields update
-    # password will not update due to `_attr_protected`.
-    # will persist to database
-    user.update(first_name='John', last_name='Doe', password='new_password')
+        # example Model
+        class User(db.Model):
+            __attribute_filters__ = {
+                'accessible': ('fullname', 'country'),
+                'protected': ('id', 'email', 'password')
+                'hidden': ('password', )
+            }
 
-    # Queries
-    User.count()
-    User.all() # get all users in a list
-    User.first() # return the first user
-    User.find_by(username='kofrasa') # return first user matching criteria
+            email = db.Column(db.String, unique=True)
+            password = db.Column(db.String, unique=True)
+            fullname = db.Column(db.String)
+            country = db.Column(db.String(2))
 
-    # efficiently iterate over all users
-    for user in User.find_each():
-        # do something with user
-        pass
-
-    # efficiently iterate in batches
-    for users in User.where(last_name='Asante').find_in_batches(batch_size=10):
-        # do something with users
-        pass
     """
-    __abstract__ = True
 
-    # : the query class used.  The :attr:`query` attribute is an instance
-    # : of this class.  By default a :class:`BaseQuery` is used.
-    query_class = flask_sqlalchemy.BaseQuery
-
-    #: an instance of :attr:`query_class`.  Can be used to query the
-    #: database for instances of this model.
-    query = None
-
-    # attributes protected from mass assignment
-    _attr_protected = tuple()
-
-    # attributes accessible through mass assignments and also returned by to_json
-    _attr_accessible = tuple()
-
-    # attributes hidden from JSON serialization
-    _attr_hidden = tuple()
+    #: a `dict` of attribute filters for different purposes
+    __attribute_filters__ = {}
 
     def __repr__(self):
         return "%s(\n%s\n)" % (
@@ -455,110 +443,119 @@ class ActiveRecord(object):
             ', \n'.join(["  %s=%r" % (c, getattr(self, c)) for c in
                          self.__class__.get_columns()]))
 
-    def assign(self, *args, **params):
-        sanitize = True
-        if args and isinstance(args[0], dict):
-            sanitize = args[0].get('sanitize', sanitize)
-            params = params or args[0]
-        del params['sanitize']
+    def assign(self, **kwargs):
+        """Allows assigning model attributes in batch.
+        Filters out *protected* attributes and allow only *accessible* attributes if non-empty.
+        This method does not persist changes to the database. Example::
 
-        for attr in self.get_columns():
-            if attr not in params:
+            # with reference to User model. `password` is ignored
+            user.assign(fullname='Joe Smith', country='US', password='012345')
+
+        :param kwargs: a `dict` with names matching model attributes
+        """
+        for key in self.get_columns():
+            if key in self.__attribute_filters__.get('protected', EMPTY):
                 continue
-            if sanitize and attr in self._attr_protected:
-                continue
-            if hasattr(self, attr) \
-                    and not sanitize \
-                    or (not self._attr_accessible
-                        or attr in self._attr_accessible):
-                setattr(self, attr, params[attr])
+            attr_accessible = self.__attribute_filters__.get('accessible', EMPTY)
+            if key in kwargs and (not attr_accessible or key in attr_accessible):
+                setattr(self, key, kwargs[key])
         return self
 
-    def update(self, *args, **params):
-        self.assign(*args, **params)
-        return self.save()
+    def update(self, **kwargs):
+        """Same as :meth:`assign` method but persists changes to database.
+        """
+        return self.assign(**kwargs).save()
 
     def save(self, commit=True):
+        """Saves the updated model to the current entity session.
+
+        :param commit: flag to determine whether to persist to database instantly
+        """
         self.query.session.add(self)
         if commit:
             self.query.session.commit()
         return self
 
     def delete(self, commit=True):
+        """Removes the model from the current entity session and mark for deletion.
+
+        :param commit: flag to determine whether to persist to database instantly
+        """
         self.query.session.delete(self)
         return commit and self.query.session.commit()
 
-    def to_dict(self, *fields, **props):
+    def to_dict(self, *fields, **kwargs):
         """Serialize the model to a `dict`
+
+        :param fields: the attribute names to include
+        :param kwargs: extra data and options
+        :return: a `dict` representation of the model
         """
-        return _model_to_dict(self, *fields, **props)
+        return _model_to_dict(self, *fields, **kwargs)
 
     @classmethod
     def get_columns(cls):
-        return _get_columns(cls).keys()
+        return _get_columns(cls)
 
     @classmethod
-    def create(cls, **kw):
-        return cls(**kw).save()
+    def create(cls, **kwargs):
+        """Create and persist a new record for the model
+
+        :param kwargs: attributes for the record
+        :return: the new model instance
+        """
+        return cls(**kwargs).save()
 
     @classmethod
-    def destroy(cls, *idents):
-        return cls.where(id=list(idents)).delete()
+    def destroy(cls, *ids):
+        """Delete the records with the given ids
+
+        :param ids: primary key ids of records
+        """
+        for pk in ids:
+            cls.find(pk).delete(False)
+        cls.query.session.commit()
 
     @classmethod
     def find(cls, id):
+        """Find record by the id
+
+        :param id: the primary key id
+        """
         return cls.query.get(id)
 
     @classmethod
     def all(cls):
+        """Return all records for this model type"""
         return cls.query.all()
 
     @classmethod
     def first(cls):
-        return cls.query.first()
-
-    @classmethod
-    def exists(cls, *criteria, **filters):
-        return cls.find_by(*criteria, **filters) is not None
+        """Returns the first record of this model after ordering by `id`"""
+        return cls.select().order_by(_primary_key(cls)).first()
 
     @classmethod
     def count(cls):
-        return cls.query.count()
+        """Return the count of the number of records of this model"""
+        return cls.select().count()
 
     @classmethod
     def find_by(cls, *criteria, **filters):
-        """An alias to using `where().first()`
-        """
-        return cls.where(*criteria, **filters).first()
+        """An alias to using `where(*criteria, **filters).first()` for convenience"""
+        return cls.where(*criteria, **filters).order_by(_primary_key(cls)).first()
 
     @classmethod
     def find_each(cls, start=None, batch_size=None):
-        """Fetch records efficiently
-
-        :param start: the start position
-        :param batch_size: the batch size
-        :return: an iterable generator yield each record
-        """
         return cls.select().find_each(start=start, batch_size=batch_size)
 
     @classmethod
     def find_in_batches(cls, start=None, batch_size=None):
-        """Fetch records in batches efficiently
-
-        :param start: the start position
-        :param batch_size: the batch size
-        :return: an iterable generator yielding each batch
-        """
         return cls.select().find_in_batches(start=start, batch_size=batch_size)
 
     @classmethod
-    def select(cls, *fields):
-        q = _QueryHelper(cls)
-        q.select(*fields)
-        return q
+    def select(cls, *columns):
+        return _QueryHelper(cls).select(*columns)
 
     @classmethod
     def where(cls, *criteria, **filters):
-        q = _QueryHelper(cls)
-        q.where(*criteria, **filters)
-        return q
+        return _QueryHelper(cls).where(*criteria, **filters)
