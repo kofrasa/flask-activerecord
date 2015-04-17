@@ -9,4 +9,7 @@ test:
 clean:
 	@rm -fr dist build *.egg-info *.py[cod]
 
-.PHONY: install test clean
+upload:
+    python setup.py sdist upload -r pypi
+
+.PHONY: install test clean upload
