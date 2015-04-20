@@ -11,6 +11,7 @@ __version__ = '0.2'
 __all__ = ['patch_model', 'json_value']
 
 import datetime as dt
+from functools import wraps
 import flask_sqlalchemy
 from sqlalchemy.orm import RelationshipProperty, \
     object_mapper, class_mapper, defer, eagerload
@@ -30,6 +31,23 @@ def _get_mapper(obj):
     return mapper(obj)
 
 
+__CACHE = {}
+
+
+def _memoize(f):
+    @wraps(f)
+    def wrapper(obj):
+        key = f.__name__
+        mapper = _get_mapper(obj)
+        if mapper in __CACHE and key in __CACHE[mapper]:
+            return __CACHE[mapper][key]
+        __CACHE.setdefault(mapper, {})
+        __CACHE[mapper][key] = f(obj)
+        return __CACHE[mapper][key]
+    return wrapper
+
+
+@_memoize
 def _get_primary_keys(obj):
     """Returns the name of the primary key of the specified model or instance
     of a model, as a string.
@@ -42,12 +60,14 @@ def _get_primary_keys(obj):
     return [key for key, val in _get_mapper(obj).c.items() if val.primary_key]
 
 
+@_memoize
 def _get_columns(model):
     """Returns a `list` of columns names of the given model
     """
     return [key for key, val in _get_mapper(model).c.items()]
 
 
+@_memoize
 def _get_relations(model):
     """Return a `list` of relationship names or the given model
     """
@@ -235,15 +255,11 @@ def _where_clause(model, *criteria, **filters):
     return conditions
 
 
-def _primary_key(cls):
-    """Return the primary key column"""
-    return getattr(cls, 'id')
-
-
 class _QueryHelper(object):
     """
     A query helper interface also used to proxy query methods
     """
+
     def __init__(self, model):
         self._model = model
         self._scalar = None
@@ -299,7 +315,7 @@ class _QueryHelper(object):
         """Return a count of records in the query"""
         from sqlalchemy import func
 
-        self._scalar = func.count(_primary_key(self._model))
+        self._scalar = func.count(getattr(self._model, 'id'))
         return self._query.scalar()
 
     def delete(self):
@@ -337,7 +353,16 @@ class _QueryHelper(object):
         return self
 
     def order_by(self, *expressions):
-        self._order_by = expressions
+        from sqlalchemy.sql.expression import desc, asc
+
+        self._order_by = []
+        for key in expressions:
+            if isinstance(key, basestring):
+                fn, key = (desc, key[1:]) if key.startswith('-') else (asc, key)
+                field = fn(getattr(self._model, key))
+                self._order_by.append(field)
+            else:
+                self._order_by.append(key)
         return self
 
     def group_by(self, *criteria):
@@ -531,7 +556,17 @@ class ActiveRecord(flask_sqlalchemy.Model):
     @classmethod
     def first(cls):
         """Returns the first record of this model after ordering by `id`"""
-        return cls.select().order_by(_primary_key(cls)).first()
+        rs = cls.take(1)
+        return rs[0] if rs else None
+
+    @classmethod
+    def last(cls):
+        rs = cls.take(1, True)
+        return rs[0] if rs else None
+
+    @classmethod
+    def take(cls, n, reverse=False):
+        return cls.select().order_by((reverse and '-' or '') + 'id').limit(n).all()
 
     @classmethod
     def count(cls):
@@ -541,7 +576,7 @@ class ActiveRecord(flask_sqlalchemy.Model):
     @classmethod
     def find_by(cls, *criteria, **filters):
         """An alias to using `where(*criteria, **filters).first()` for convenience"""
-        return cls.where(*criteria, **filters).order_by(_primary_key(cls)).first()
+        return cls.where(*criteria, **filters).order_by('id').first()
 
     @classmethod
     def find_each(cls, start=None, batch_size=None):

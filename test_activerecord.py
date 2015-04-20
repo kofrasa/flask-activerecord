@@ -517,7 +517,7 @@ class ActiveRecordTestCase(unittest.TestCase):
     def setUp(self):
         app = flask.Flask(__name__)
         app.config['SQLALCHEMY_ENGINE'] = 'sqlite://'
-        app.config['SQLALCHEMY_ECHO'] = False
+        app.config['SQLALCHEMY_ECHO'] = True
         app.config['TESTING'] = True
         db = sqlalchemy.SQLAlchemy(app)
         self.Todo = make_todo_model(db)
@@ -593,6 +593,11 @@ class ActiveRecordTestCase(unittest.TestCase):
         self.assertEqual(2, self.Todo.count())
         self.Todo.destroy(2, 3)
         self.assertEqual(0, self.Todo.count())
+
+    def test_order_by(self):
+        todos = self.Todo.select('id').order_by('-id').all()
+        for i in range(len(todos)):
+            self.assertEqual(len(todos) - i, todos[i].id)
 
 
 def suite():
