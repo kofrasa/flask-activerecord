@@ -171,8 +171,6 @@ def json_value(value):
     elif isinstance(value, dict):
         return {k: json_value(value[k]) for k in value}
     elif isinstance(value, (dt.datetime, dt.date, dt.time)):
-        if isinstance(value, (dt.datetime, dt.time)):
-            value = value.replace(microsecond=0)
         return value.isoformat()
     elif hasattr(value, 'to_dict') and callable(getattr(value, 'to_dict')):
         return json_value(value.to_dict())
