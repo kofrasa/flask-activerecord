@@ -30,7 +30,7 @@ ActiveRecord support for Flask-SQLAlchemy models
 """
 
 from setuptools import setup
-from flask_activerecord import __version__
+from _version import __version__
 
 
 setup(
