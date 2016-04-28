@@ -42,7 +42,7 @@ setup(
     url='https://github.com/kofrasa/flask-activerecord',
     description='ActiveRecord support for Flask-SQLAlchemy models',
     long_description=__doc__,
-    py_modules=['flask_activerecord'],
+    py_modules=['flask_activerecord', '_version'],
     include_package_data=True,
     zip_safe=False,
     platforms='any',
