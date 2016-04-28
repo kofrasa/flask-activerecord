@@ -7,7 +7,6 @@
     :license: BSD, see LICENSE for more details.
 """
 
-__version__ = '0.2.1'
 __all__ = ['patch_model', 'json_value']
 
 import datetime as dt
