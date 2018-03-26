@@ -26,7 +26,7 @@ db = SQLAlchemy(app)
 class User(db.Model):
     __attribute_filters__ = {
         'accessible': ('fullname', 'country'),
-        'protected': ('id', 'email', 'password')
+        'protected': ('id', 'email', 'password'),
         'hidden': ('password', )
     }
 
